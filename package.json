@@ -1,0 +1,19 @@
+{
+  "name": "xdigitex-agent-computer",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @xdigitex/api --filter @xdigitex/web dev",
+    "lint": "pnpm -r lint",
+    "test": "pnpm --filter @xdigitex/api test",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @xdigitex/api prisma generate",
+    "db:migrate": "pnpm --filter @xdigitex/api prisma migrate deploy",
+    "start:api": "pnpm --filter @xdigitex/api start",
+    "start:worker": "pnpm --filter @xdigitex/api worker",
+    "start:guest-agent": "pnpm --filter @xdigitex/guest-agent start"
+  },
+  "devDependencies": { "typescript": "^5.7.3" }
+}

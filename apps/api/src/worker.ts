@@ -1,0 +1,32 @@
+import { Worker, type Job } from "bullmq";
+import { loadConfig } from "./config.js";
+import { prisma } from "./db.js";
+import { QUEUE_NAME, redisConnection, type InfrastructureJobData } from "./queue.js";
+import { providerFor } from "./providers/factory.js";
+import { scheduleHost } from "./services/scheduler.js";
+import { cloudInit } from "./cloud-init.js";
+import { reconcile } from "./services/reconciliation.js";
+
+const config=loadConfig();
+const finalStatus:Record<string,"RUNNING"|"STOPPED"|"SUSPENDED"|"DELETED">={PROVISION:"RUNNING",START:"RUNNING",STOP:"STOPPED",RESTART:"RUNNING",SUSPEND:"SUSPENDED",RESUME:"RUNNING",DELETE:"DELETED"};
+async function processJob(job:Job<InfrastructureJobData>){
+  const record=await prisma.provisioningJob.update({
+    where:{id:job.data.provisioningJobId},
+    data:{status:"RUNNING",attempts:{increment:1},startedAt:new Date()},
+    include:{computer:{include:{image:true,host:{include:{credential:true}}}}}
+  });
+  try{
+    if(record.type==="RECONCILE"){await reconcile(prisma,config);await prisma.provisioningJob.update({where:{id:record.id},data:{status:"SUCCEEDED",completedAt:new Date()}});return;}
+    if(!record.computer)throw new Error("Computer no longer exists");let computer=record.computer;
+    if(record.type==="PROVISION"&&!computer.host){const host=await scheduleHost(prisma,{provider:computer.provider,region:computer.region,vcpu:computer.vcpu,ramMb:computer.ramMb,storageGb:computer.storageGb});computer=await prisma.$transaction(async tx=>{await tx.computeHost.update({where:{id:host.id},data:{allocatedCpu:{increment:computer.vcpu},allocatedRamMb:{increment:computer.ramMb},allocatedStorageGb:{increment:computer.storageGb}}});return tx.computer.update({where:{id:computer.id},data:{hostId:host.id,status:"PROVISIONING"},include:{image:true,host:{include:{credential:true}}}});});}
+    if(!computer.host)throw Object.assign(new Error("Compute host is not configured"),{code:"HOST_NOT_CONFIGURED"});const provider=providerFor(computer.host,config);const id=computer.providerInstanceId;
+    if(record.type==="PROVISION"){const created=await provider.createComputer({id:computer.id,name:computer.name,hostname:computer.hostname,image:computer.image.providerImageId,vcpu:computer.vcpu,ramMb:computer.ramMb,storageGb:computer.storageGb,sshPublicKey:computer.sshPublicKey??undefined,cloudInitUserData:cloudInit({hostname:computer.hostname,sshPublicKey:computer.sshPublicKey??undefined})});await prisma.computer.update({where:{id:computer.id},data:{providerInstanceId:created.providerInstanceId,status:created.status}});await provider.startComputer(created.providerInstanceId);}
+    else {if(!id)throw new Error("Provider instance is missing");if(record.type==="START")await provider.startComputer(id);else if(record.type==="STOP")await provider.stopComputer(id);else if(record.type==="RESTART")await provider.restartComputer(id);else if(record.type==="SUSPEND")await provider.suspendComputer(id);else if(record.type==="RESUME")await provider.resumeComputer(id);else if(record.type==="DELETE")await provider.deleteComputer(id);else if(record.type==="SNAPSHOT_CREATE"){const snapshotId=String((record.payload as any)?.snapshotId);const snapshot=await prisma.computerSnapshot.findUniqueOrThrow({where:{id:snapshotId}});const providerSnapshotId=await provider.createSnapshot(id,snapshot.name);await prisma.computerSnapshot.update({where:{id:snapshot.id},data:{providerSnapshotId,status:"READY"}});}else if(record.type==="SNAPSHOT_RESTORE"){const snapshot=await prisma.computerSnapshot.findUniqueOrThrow({where:{id:String((record.payload as any)?.snapshotId)}});if(!snapshot.providerSnapshotId)throw new Error("Snapshot is not ready");await provider.restoreSnapshot(id,snapshot.providerSnapshotId);await prisma.computerSnapshot.update({where:{id:snapshot.id},data:{status:"READY"}});}}
+    const target=finalStatus[record.type];if(target)await prisma.computer.update({where:{id:computer.id},data:{status:target,deletedAt:target==="DELETED"?new Date():undefined,lastStartedAt:target==="RUNNING"?new Date():undefined,lastStoppedAt:target==="STOPPED"?new Date():undefined,version:{increment:1}}});await prisma.provisioningJob.update({where:{id:record.id},data:{status:"SUCCEEDED",completedAt:new Date()}});
+  }catch(error){const code=(error as any)?.code??"OPERATION_FAILED";await prisma.provisioningJob.update({where:{id:record.id},data:{status:job.attemptsMade+1<record.maxAttempts?"RETRYING":"FAILED",errorCode:code,errorMessage:error instanceof Error?error.message.slice(0,500):"Operation failed",completedAt:new Date()}});if(record.computerId)await prisma.computer.update({where:{id:record.computerId},data:{status:code==="PROVIDER_UNAVAILABLE"||code==="HOST_NOT_CONFIGURED"?"PROVIDER_UNAVAILABLE":"ERROR",version:{increment:1}}});throw error;}
+}
+const worker=new Worker<InfrastructureJobData>(QUEUE_NAME,processJob,{connection:redisConnection(config),concurrency:5});
+worker.on("failed",(job,error)=>console.error(JSON.stringify({event:"job.failed",jobId:job?.id,message:error.message})));
+const reconcileTimer=setInterval(()=>void reconcile(prisma,config),config.RECONCILIATION_INTERVAL_SECONDS*1000);reconcileTimer.unref();
+const metricsTimer=setInterval(async()=>{const computers=await prisma.computer.findMany({where:{status:"RUNNING",providerInstanceId:{not:null}},include:{host:{include:{credential:true}}}});for(const c of computers){if(!c.host||!c.providerInstanceId)continue;try{const m=await providerFor(c.host,config).getMetrics(c.providerInstanceId);await prisma.computerMetric.create({data:{computerId:c.id,...m,uptimeSeconds:m.uptimeSeconds==null?undefined:BigInt(m.uptimeSeconds)}});}catch{}}},config.METRICS_INTERVAL_SECONDS*1000);metricsTimer.unref();
+for(const signal of ["SIGTERM","SIGINT"]){process.on(signal,async()=>{await worker.close();await prisma.$disconnect();process.exit(0);});}

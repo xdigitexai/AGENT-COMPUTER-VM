@@ -1,0 +1,449 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+enum Role {
+  USER
+  ORG_ADMIN
+  ADMIN
+  SUPER_ADMIN
+}
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  PENDING_VERIFICATION
+}
+enum ComputerStatus {
+  CREATING
+  PROVISIONING
+  RUNNING
+  STOPPING
+  STOPPED
+  SUSPENDING
+  SUSPENDED
+  STARTING
+  REBOOTING
+  DELETING
+  DELETED
+  ERROR
+  PROVIDER_UNAVAILABLE
+}
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  RETRYING
+  CANCELLED
+}
+enum JobType {
+  PROVISION
+  START
+  STOP
+  RESTART
+  SUSPEND
+  RESUME
+  DELETE
+  SNAPSHOT_CREATE
+  SNAPSHOT_RESTORE
+  SNAPSHOT_DELETE
+  RESIZE
+  RECONCILE
+}
+enum HostHealth {
+  UNKNOWN
+  HEALTHY
+  DEGRADED
+  UNREACHABLE
+}
+enum BillingState {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+  UNAVAILABLE
+}
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  UNAVAILABLE
+}
+enum SnapshotStatus {
+  CREATING
+  READY
+  RESTORING
+  DELETING
+  ERROR
+}
+model User {
+  id String @id @default(uuid()) @db.Uuid
+  email String @unique
+  passwordHash String
+  name String?
+  role Role @default(USER)
+  status UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt DateTime?
+  disabledAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sessions Session[]
+  memberships OrganizationMember[]
+  ownedOrganizations Organization[] @relation("OrganizationOwner")
+  apiKeys ApiKey[]
+  auditLogs AuditLog[] @relation("AuditActor")
+}
+model Session {
+  id String @id @default(uuid()) @db.Uuid
+  tokenHash String @unique
+  userId String @db.Uuid
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  ipAddress String?
+  userAgent String?
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+model PasswordResetToken {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  tokenHash String @unique
+  expiresAt DateTime
+  usedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId])
+}
+model EmailVerificationToken {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  tokenHash String @unique
+  expiresAt DateTime
+  usedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId])
+}
+model Organization {
+  id String @id @default(uuid()) @db.Uuid
+  name String
+  slug String @unique
+  ownerId String @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  owner User @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  members OrganizationMember[]
+  computers Computer[]
+  subscriptions Subscription[]
+  secrets Secret[]
+  usageRecords UsageRecord[]
+}
+model OrganizationMember {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  userId String @db.Uuid
+  role Role @default(USER)
+  createdAt DateTime @default(now())
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+model ComputePlan {
+  id String @id @default(uuid()) @db.Uuid
+  name String @unique
+  enabled Boolean @default(true)
+  monthlyBaseCents Int @default(0)
+  computerLimit Int
+  runningComputerLimit Int
+  cpuAllowance Int
+  ramAllowanceMb Int
+  storageAllowanceGb Int
+  apiRequestsPerMinute Int @default(120)
+  usagePricing Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  computers Computer[]
+  subscriptions Subscription[]
+}
+model ComputerImage {
+  id String @id @default(uuid()) @db.Uuid
+  name String
+  version String
+  architecture String @default("amd64")
+  provider String
+  providerImageId String
+  enabled Boolean @default(true)
+  cloudInitEnabled Boolean @default(true)
+  createdAt DateTime @default(now())
+  computers Computer[]
+  @@unique([provider, providerImageId])
+}
+model ComputeHost {
+  id String @id @default(uuid()) @db.Uuid
+  name String @unique
+  provider String
+  endpoint String
+  node String
+  region String
+  enabled Boolean @default(true)
+  maintenanceMode Boolean @default(false)
+  cpuCapacity Int
+  ramCapacityMb Int
+  storageCapacityGb Int
+  allocatedCpu Int @default(0)
+  allocatedRamMb Int @default(0)
+  allocatedStorageGb Int @default(0)
+  health HostHealth @default(UNKNOWN)
+  lastHeartbeatAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  credential ProviderCredential?
+  computers Computer[]
+  @@index([enabled, maintenanceMode, region, provider])
+}
+model ProviderCredential {
+  id String @id @default(uuid()) @db.Uuid
+  hostId String @unique @db.Uuid
+  encryptedValue String
+  keyVersion Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  host ComputeHost @relation(fields: [hostId], references: [id], onDelete: Cascade)
+}
+model Computer {
+  id String @id @default(uuid()) @db.Uuid
+  ownerId String @db.Uuid
+  organizationId String @db.Uuid
+  name String
+  hostname String
+  provider String
+  providerInstanceId String?
+  hostId String? @db.Uuid
+  region String
+  status ComputerStatus @default(CREATING)
+  imageId String @db.Uuid
+  planId String @db.Uuid
+  vcpu Int
+  ramMb Int
+  storageGb Int
+  ipv4 String?
+  ipv6 String?
+  sshPublicKey String?
+  uptimeSeconds BigInt @default(0)
+  billingState BillingState @default(UNAVAILABLE)
+  agentAccessEnabled Boolean @default(false)
+  desiredStatus ComputerStatus @default(STOPPED)
+  lastStartedAt DateTime?
+  lastStoppedAt DateTime?
+  deletedAt DateTime?
+  version Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id])
+  host ComputeHost? @relation(fields: [hostId], references: [id])
+  image ComputerImage @relation(fields: [imageId], references: [id])
+  plan ComputePlan @relation(fields: [planId], references: [id])
+  networks ComputerNetwork[]
+  snapshots ComputerSnapshot[]
+  jobs ProvisioningJob[]
+  metrics ComputerMetric[]
+  agentCredentials AgentCredential[]
+  commandRequests CommandRequest[]
+  usageRecords UsageRecord[]
+  @@index([organizationId, status])
+  @@index([hostId, status])
+  @@unique([organizationId, name])
+}
+model ComputerNetwork {
+  id String @id @default(uuid()) @db.Uuid
+  computerId String @db.Uuid
+  macAddress String?
+  ipv4 String?
+  ipv6 String?
+  networkBridge String?
+  createdAt DateTime @default(now())
+  computer Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+}
+model ComputerSnapshot {
+  id String @id @default(uuid()) @db.Uuid
+  computerId String @db.Uuid
+  providerSnapshotId String?
+  name String
+  status SnapshotStatus @default(CREATING)
+  sizeBytes BigInt?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  computer Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  @@index([computerId, createdAt])
+}
+model ProvisioningJob {
+  id String @id @default(uuid()) @db.Uuid
+  computerId String? @db.Uuid
+  type JobType
+  status JobStatus @default(QUEUED)
+  idempotencyKey String? @unique
+  attempts Int @default(0)
+  maxAttempts Int @default(3)
+  errorCode String?
+  errorMessage String?
+  payload Json?
+  startedAt DateTime?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  computer Computer? @relation(fields: [computerId], references: [id], onDelete: SetNull)
+  @@index([status, createdAt])
+  @@index([computerId, type])
+}
+model ComputerMetric {
+  id BigInt @id @default(autoincrement())
+  computerId String @db.Uuid
+  observedAt DateTime
+  cpuPercent Float?
+  memoryUsedBytes BigInt?
+  memoryTotalBytes BigInt?
+  diskUsedBytes BigInt?
+  diskTotalBytes BigInt?
+  networkRxBytes BigInt?
+  networkTxBytes BigInt?
+  uptimeSeconds BigInt?
+  computer Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  @@index([computerId, observedAt])
+}
+model ApiKey {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  organizationId String @db.Uuid
+  name String
+  prefix String
+  tokenHash String @unique
+  scopes String[]
+  expiresAt DateTime?
+  revokedAt DateTime?
+  lastUsedAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([organizationId, revokedAt])
+}
+model AgentCredential {
+  id String @id @default(uuid()) @db.Uuid
+  computerId String @db.Uuid
+  name String
+  tokenHash String @unique
+  permissions String[]
+  expiresAt DateTime?
+  revokedAt DateTime?
+  lastUsedAt DateTime?
+  createdAt DateTime @default(now())
+  computer Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+}
+model Secret {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  name String
+  encryptedValue String
+  keyVersion Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, name])
+}
+model CommandRequest {
+  id String @id @default(uuid()) @db.Uuid
+  computerId String @db.Uuid
+  actorId String
+  operation String
+  arguments Json
+  status String @default("QUEUED")
+  timeoutMs Int
+  outputLimitBytes Int
+  result CommandResult?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  computer Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  @@index([computerId, status])
+}
+model CommandResult {
+  id String @id @default(uuid()) @db.Uuid
+  requestId String @unique @db.Uuid
+  exitCode Int?
+  stdout String?
+  stderr String?
+  truncated Boolean @default(false)
+  startedAt DateTime
+  completedAt DateTime
+  request CommandRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+model UsageRecord {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  computerId String? @db.Uuid
+  periodStart DateTime
+  periodEnd DateTime
+  runtimeSeconds BigInt @default(0)
+  vcpuSeconds BigInt @default(0)
+  ramMbSeconds BigInt @default(0)
+  storageGbHours Float @default(0)
+  networkRxBytes BigInt?
+  networkTxBytes BigInt?
+  source String
+  createdAt DateTime @default(now())
+  organization Organization @relation(fields: [organizationId], references: [id])
+  computer Computer? @relation(fields: [computerId], references: [id], onDelete: SetNull)
+  @@unique([organizationId, computerId, periodStart, periodEnd, source])
+  @@index([organizationId, periodStart])
+}
+model Subscription {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  planId String @db.Uuid
+  status SubscriptionStatus @default(UNAVAILABLE)
+  externalProvider String?
+  externalId String?
+  currentPeriodStart DateTime?
+  currentPeriodEnd DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plan ComputePlan @relation(fields: [planId], references: [id])
+  @@index([organizationId, status])
+}
+model Invoice {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  subscriptionId String? @db.Uuid
+  amountCents Int
+  currency String @default("USD")
+  status String
+  externalId String?
+  periodStart DateTime
+  periodEnd DateTime
+  createdAt DateTime @default(now())
+  @@index([organizationId, createdAt])
+}
+model AuditLog {
+  id BigInt @id @default(autoincrement())
+  actorId String? @db.Uuid
+  organizationId String? @db.Uuid
+  action String
+  resourceType String
+  resourceId String?
+  ipAddress String?
+  metadata Json?
+  createdAt DateTime @default(now())
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  @@index([organizationId, createdAt])
+  @@index([resourceType, resourceId])
+}
+model SystemSetting {
+  key String @id
+  value Json
+  updatedById String? @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

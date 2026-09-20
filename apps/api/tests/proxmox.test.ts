@@ -1,0 +1,4 @@
+import {afterEach,describe,expect,it,vi} from "vitest";
+import {ProxmoxProvider} from "../src/providers/proxmox.js";
+const provider=()=>new ProxmoxProvider({endpoint:"https://pve.test:8006",node:"pve1",tokenId:"svc@pve!api",tokenSecret:"secret",storage:"local-lvm",bridge:"vmbr0"});
+describe("Proxmox provider",()=>{afterEach(()=>vi.unstubAllGlobals());it("maps real provider state",async()=>{vi.stubGlobal("fetch",vi.fn().mockResolvedValue(new Response(JSON.stringify({data:{status:"running",uptime:42}}),{status:200,headers:{"content-type":"application/json"}})));await expect(provider().getComputer("101")).resolves.toMatchObject({providerInstanceId:"101",status:"RUNNING",uptimeSeconds:42})});it("reports authentication failure without fake success",async()=>{vi.stubGlobal("fetch",vi.fn().mockResolvedValue(new Response("",{status:401})));await expect(provider().healthCheck()).resolves.toMatchObject({ok:false,message:"Provider authentication failed"})})});

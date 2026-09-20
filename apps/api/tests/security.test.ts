@@ -1,0 +1,3 @@
+import { describe,expect,it } from "vitest";
+import { constantTimeTokenMatch,decryptSecret,encryptSecret,hashToken } from "../src/security/crypto.js";
+describe("secret protection",()=>{it("encrypts with authenticated encryption",()=>{const key="a".repeat(32);const encrypted=encryptSecret("provider-token",key);expect(encrypted).not.toContain("provider-token");expect(decryptSecret(encrypted,key)).toBe("provider-token");expect(()=>decryptSecret(encrypted,"b".repeat(32))).toThrow()});it("matches only the original token",()=>{const hash=hashToken("xdg_secret");expect(constantTimeTokenMatch(hash,"xdg_secret")).toBe(true);expect(constantTimeTokenMatch(hash,"xdg_other")).toBe(false)})});

@@ -1,0 +1,18 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { prisma } from "../db.js";
+import { requireRole } from "../auth.js";
+import { encryptSecret } from "../security/crypto.js";
+import type { Config } from "../config.js";
+import { providerFor } from "../providers/factory.js";
+
+export function adminRoutes(config:Config){return async(app:FastifyInstance)=>{
+  app.addHook("preHandler",requireRole("ADMIN"));
+  app.get("/overview",async()=>{const [users,organizations,computers,running,stopped,failed,hosts,activeJobs,failedJobs]=await Promise.all([prisma.user.count(),prisma.organization.count(),prisma.computer.count({where:{deletedAt:null}}),prisma.computer.count({where:{status:"RUNNING"}}),prisma.computer.count({where:{status:"STOPPED"}}),prisma.computer.count({where:{status:{in:["ERROR","PROVIDER_UNAVAILABLE"]}}}),prisma.computeHost.count(),prisma.provisioningJob.count({where:{status:{in:["QUEUED","RUNNING","RETRYING"]}}}),prisma.provisioningJob.count({where:{status:"FAILED"}})]);return {users,organizations,computers,running,stopped,failed,hosts,activeJobs,failedJobs};});
+  app.get("/hosts",async()=>({data:await prisma.computeHost.findMany({select:{id:true,name:true,provider:true,endpoint:true,node:true,region:true,enabled:true,maintenanceMode:true,cpuCapacity:true,ramCapacityMb:true,storageCapacityGb:true,allocatedCpu:true,allocatedRamMb:true,allocatedStorageGb:true,health:true,lastHeartbeatAt:true}})}));
+  app.post("/hosts",async(req,reply)=>{const input=z.object({name:z.string().min(1),provider:z.literal("proxmox"),endpoint:z.string().url(),node:z.string().min(1),region:z.string().min(1),cpuCapacity:z.number().int().positive(),ramCapacityMb:z.number().int().positive(),storageCapacityGb:z.number().int().positive(),credential:z.object({tokenId:z.string().min(1),tokenSecret:z.string().min(1),storage:z.string().default("local-lvm"),bridge:z.string().default("vmbr0")})}).parse(req.body);const {credential,...hostData}=input;const host=await prisma.computeHost.create({data:{...hostData,credential:{create:{encryptedValue:encryptSecret(JSON.stringify(credential),config.ENCRYPTION_KEY)}}},select:{id:true,name:true,provider:true,region:true,health:true}});await prisma.auditLog.create({data:{actorId:req.auth!.userId,action:"admin.host.create",resourceType:"ComputeHost",resourceId:host.id,ipAddress:req.ip}});return reply.code(201).send(host);});
+  app.patch("/hosts/:id/maintenance",async(req,reply)=>{const {id}=z.object({id:z.string().uuid()}).parse(req.params);const {maintenanceMode}=z.object({maintenanceMode:z.boolean()}).parse(req.body);const host=await prisma.computeHost.update({where:{id},data:{maintenanceMode}});await prisma.auditLog.create({data:{actorId:req.auth!.userId,action:"admin.host.maintenance",resourceType:"ComputeHost",resourceId:id,ipAddress:req.ip,metadata:{maintenanceMode}}});return host;});
+  app.post("/hosts/:id/health",async(req,reply)=>{const {id}=z.object({id:z.string().uuid()}).parse(req.params);const host=await prisma.computeHost.findUnique({where:{id},include:{credential:true}});if(!host)return reply.code(404).send({error:{code:"NOT_FOUND",message:"Host not found"}});const health=await providerFor(host,config).healthCheck();await prisma.computeHost.update({where:{id},data:{health:health.ok?"HEALTHY":"UNREACHABLE",lastHeartbeatAt:new Date()}});return health;});
+  app.get("/jobs",async()=>({data:await prisma.provisioningJob.findMany({orderBy:{createdAt:"desc"},take:200})}));
+  app.get("/audit-logs",async()=>({data:(await prisma.auditLog.findMany({orderBy:{createdAt:"desc"},take:200})).map(x=>({...x,id:x.id.toString()}))}));
+};}
