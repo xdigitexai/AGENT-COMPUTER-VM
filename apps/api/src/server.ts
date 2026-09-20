@@ -15,6 +15,10 @@ import { healthRoutes } from "./routes/health.js";
 import { createInfrastructureQueue } from "./queue.js";
 import { prisma } from "./db.js";
 
+// Prisma maps 64-bit integer columns (metrics, uptime, usage) to BigInt, and JSON.stringify
+// throws "Do not know how to serialize a BigInt". Without this, a successful operation is
+// returned as HTTP 500 during response serialization.
+(BigInt.prototype as unknown as {toJSON:()=>number}).toJSON=function(this:bigint){return Number(this)};
 const config=loadConfig();const app=Fastify({logger:{level:config.LOG_LEVEL,redact:["req.headers.authorization","req.headers.cookie","password","token","secret","credential","encryptedValue"]},trustProxy:config.TRUST_PROXY==="true",bodyLimit:1024*1024});const queue=createInfrastructureQueue(config);
 await app.register(helmet,{contentSecurityPolicy:false});await app.register(cors,{origin:config.WEB_ORIGIN,credentials:true});await app.register(cookie,{secret:config.SESSION_SECRET});await app.register(rateLimit,{max:120,timeWindow:"1 minute"});await app.register(websocket);await app.register(authPlugin);
 await app.register(authRoutes,{prefix:"/api/v1/auth"});await app.register(computerRoutes(queue),{prefix:"/api/v1/computers"});await app.register(resourceRoutes(queue,config),{prefix:"/api/v1"});await app.register(adminRoutes(config),{prefix:"/api/v1/admin"});await app.register(healthRoutes(queue));
