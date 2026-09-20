@@ -1,9 +1,10 @@
 import type { ComputerState } from "@xdigitex/contracts";
-import { ProviderError, type ConsoleSession, type CreateComputerInput, type HostResources, type ProviderHealth, type ResizeInput, type VirtualizationProvider } from "./types.js";
+import { ProviderError, type ConsoleSession, type CreateComputerInput, type HostResources, type ProviderCapability, type ProviderHealth, type ResizeInput, type VirtualizationProvider } from "./types.js";
 
 interface ProxmoxConfig { endpoint: string; node: string; tokenId: string; tokenSecret: string; storage: string; bridge: string; verifyTls?: boolean; }
 export class ProxmoxProvider implements VirtualizationProvider {
   readonly type = "proxmox";
+  readonly capabilities:ReadonlySet<ProviderCapability>=new Set(["COMPUTE_CREATE","START","STOP","RESTART","SUSPEND","METRICS","PERSISTENT_STORAGE","SNAPSHOT","RESIZE","CONSOLE"]);
   constructor(private readonly config: ProxmoxConfig) {}
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 20_000);

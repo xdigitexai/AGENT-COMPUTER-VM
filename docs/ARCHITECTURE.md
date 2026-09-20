@@ -8,11 +8,13 @@ Lifecycle requests use compare-and-update state transitions inside transactions.
 
 ## Compute plane
 
-`VirtualizationProvider` defines creation, lifecycle, metrics, snapshot, resize, console, resource and health operations. `ProxmoxProvider` is the first real implementation and uses authenticated Proxmox VE API calls. Provider credentials are AES-256-GCM encrypted in PostgreSQL.
+`VirtualizationProvider` defines creation, lifecycle, metrics, snapshot, resize, console, command, resource and health operations plus explicit capabilities. `ProxmoxProvider` uses authenticated Proxmox VE API calls. `DockerProvider` uses Docker Engine through Dockerode and provides real containers with dedicated volumes, resource restrictions, managed labels and a private platform bridge. Provider configuration is AES-256-GCM encrypted in PostgreSQL.
 
 The scheduler filters enabled, healthy, non-maintenance hosts by provider, region and capacity, then chooses the least allocated eligible host. The worker reserves capacity transactionally and invokes the provider. A stopped computer keeps its disk and provider instance; deletion is a distinct operation.
 
-The reconciliation loop compares durable state with provider state. Unreachable providers result in `PROVIDER_UNAVAILABLE`, never a fabricated running state. Metrics are stored only when returned by the provider.
+The reconciliation loop compares durable state with either provider. Unreachable providers result in `PROVIDER_UNAVAILABLE`, never a fabricated running state. Docker containers with XDIGITEX labels but no matching database record are reported as orphans and are not deleted. Metrics and usage records are stored only when returned by the provider.
+
+Docker stop/start preserves the named `/workspace` volume. Delete removes the verified managed container and its workspace. The server derives the provider from an admin-approved image and schedules only a compatible host; clients cannot select an arbitrary image or container ID.
 
 ## Agent control plane
 

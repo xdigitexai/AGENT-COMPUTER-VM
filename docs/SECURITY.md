@@ -10,6 +10,12 @@ Every sensitive route authenticates server-side and computer queries include org
 
 The guest daemon never invokes a shell, accepts only configured executable paths, separates arguments, limits execution time and output, and binds to loopback. Production access should traverse mutually authenticated transport or a control-plane tunnel. Filesystem and screenshot endpoints require a similarly narrow permission model before enabling them.
 
+## Docker isolation
+
+The worker's Docker socket access is equivalent to host-root authority. Limit it to the worker service account and never mount the socket into AI Computers. XDIGITEX containers run unprivileged as UID 10001 with all capabilities dropped, `no-new-privileges`, a read-only root filesystem, CPU/RAM/PID limits, bounded tmpfs, one managed workspace volume, no host mounts, no published ports and a dedicated bridge with inter-container communication disabled. Host firewall rules must also prevent that bridge from reaching PostgreSQL, Redis, provider management endpoints and instance metadata while permitting intended outbound internet access.
+
+Linux containers share the host kernel and provide a weaker isolation boundary than hardware-backed VMs. Keep Docker, the host kernel and the base image patched; use seccomp/AppArmor defaults; consider rootless Docker or an additional sandbox such as gVisor where supported; and place mutually untrusted high-risk tenants on separate hosts or Proxmox VMs.
+
 Use CSRF-resistant SameSite cookies and verify `Origin` at the reverse proxy for browser writes. API tokens are not vulnerable to browser CSRF. Apply database backups, Redis persistence, network policy, OS patching, dependency scanning and centralized audit retention in production.
 
 Report vulnerabilities privately to the repository owners. Do not include credentials or customer data in reports.

@@ -14,10 +14,13 @@ Password reset delivery is an integration boundary: the API records a hashed, ex
 - `POST /computers`, `GET /computers`, `GET /computers/:id`
 - `POST /computers/:id/start|stop|restart|suspend|resume|delete`
 - `GET /computers/:id/metrics`
+- `POST /computers/:id/commands` (requires `computer:agent`; provider capability dependent)
 - `POST|GET /computers/:id/snapshots`
 - `POST /computers/:id/snapshots/:snapshotId/restore`
 
 Accepted lifecycle calls return HTTP 202 with the durable job. Invalid transitions return 409. Tenant ownership is checked before all reads and actions.
+
+Command bodies contain `executable`, an `arguments` array, `timeoutMs`, and `outputLimitBytes`. The API never accepts a host container ID or shell command string. Provider capabilities are returned on the computer detail response so unsupported actions can be hidden.
 
 ## Access and resources
 
