@@ -11,7 +11,7 @@ RUN apt-get update \
     && mkdir -p /workspace \
     && chown agent:agent /workspace
 
-ENV HOME=/home/agent \
+ENV HOME=/workspace \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_ENV=production
 WORKDIR /workspace
