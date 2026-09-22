@@ -7,6 +7,8 @@ import { providerFor } from "../providers/factory.js";
 import { ProviderError, type VirtualizationProvider } from "../providers/types.js";
 import type { Config } from "../config.js";
 import type { ControlLock } from "../services/control.js";
+import type { ActivityHub } from "../services/activity.js";
+import { activeRunFor, controllerSnapshot } from "../services/agent.js";
 import { browserNavigate, browserOpenTab, browserState, captureScreenshot, displayGeometry, inputCommands, openWebSocket, run, type SocketLike } from "../services/desktop.js";
 
 const computerId = z.object({ id: z.string().uuid() });
@@ -21,9 +23,16 @@ interface Target {
   provider: VirtualizationProvider;
 }
 
-export function desktopRoutes(config: Config, control: ControlLock) {
+export function desktopRoutes(config: Config, control: ControlLock, activity: ActivityHub) {
   return async (app: FastifyInstance) => {
     const scope = { console: requireScope("computer:console"), agent: requireScope("computer:agent"), read: requireScope("computer:read") };
+
+    // Desktop actions performed from the console are part of the same live activity story the
+    // agent writes to, so an operator can see what is happening beside the desktop.
+    const announce = async (req: FastifyRequest, id: string, kind: string, message: string, severity: "info" | "success" | "warn" | "error" = "info", metadata: Record<string, unknown> = {}) => {
+      const run = await activeRunFor(id);
+      await activity.tryRecord(prisma, { computerId: id, organizationId: req.auth!.organizationId, agentRunId: run?.id ?? null, kind, message, severity, metadata });
+    };
 
     // Ownership is enforced here for every desktop action: only computers that belong to the
     // caller's organization are ever resolved, and a computer owned by somebody else is
@@ -161,6 +170,7 @@ export function desktopRoutes(config: Config, control: ControlLock) {
           { timeoutMs: 30000 });
       }
       await audit(req, id, "computer.action.browser_navigate", { url: input.url, method });
+      await announce(req, id, "browser.navigate", `Navigating to ${input.url}`, "info", { method });
       return { action: "browser.navigate", url: input.url, method };
     }));
 
@@ -172,6 +182,7 @@ export function desktopRoutes(config: Config, control: ControlLock) {
       const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, select: { email: true } });
       const state = await control.take(id, { userId: req.auth!.userId, email: user?.email ?? null });
       await audit(req, id, "computer.control.take", {});
+      await announce(req, id, "human.took_control", `Human took control${user?.email ? ` (${user.email})` : ""}`, "warn");
       return { computerId: id, ...state };
     });
 
@@ -181,7 +192,11 @@ export function desktopRoutes(config: Config, control: ControlLock) {
       const target = await resolve(req, reply, id);
       if (!target) return;
       const state = await control.release(id);
+      const waiting = await activeRunFor(id);
+      if (waiting?.status === "WAITING_FOR_HUMAN") await prisma.agentRun.update({ where: { id: waiting.id }, data: { status: "ATTACHED", phase: "Human control released" } });
       await audit(req, id, "computer.control.release", {});
+      await announce(req, id, "human.control_released", "Human released control", "info", { heldFor: null });
+      await announce(req, id, "HUMAN_CONTROL_RELEASED", "Agent resumed — HUMAN_CONTROL_RELEASED", "success");
       return { computerId: id, ...state };
     });
 
@@ -214,12 +229,14 @@ export function desktopRoutes(config: Config, control: ControlLock) {
         } catch (error) { desktop.reason = error instanceof Error ? error.message : "Provider inspection failed"; }
       }
       const latest = await prisma.computerMetric.findFirst({ where: { computerId: id }, orderBy: { observedAt: "desc" } });
+      const agentSession = await controllerSnapshot(id, control);
       return {
         id: computer.id, name: computer.name, hostname: computer.hostname, status: computer.status, provider: computer.provider, region: computer.region,
         vcpu: computer.vcpu, ramMb: computer.ramMb, storageGb: computer.storageGb, ipv4: instance?.ipv4 ?? computer.ipv4 ?? null,
         image: { name: computer.image.name, version: computer.image.version }, host: computer.host ? { id: computer.host.id, name: computer.host.name, provider: computer.host.provider } : null,
         uptimeSeconds: instance?.uptimeSeconds ?? Number(computer.uptimeSeconds), allowedActions: allowedActions(computer.status),
         controller: state, instance, desktop,
+        agent: agentSession,
         metrics: latest ? { observedAt: latest.observedAt, cpuPercent: latest.cpuPercent, memoryUsedBytes: latest.memoryUsedBytes?.toString() ?? null, memoryTotalBytes: latest.memoryTotalBytes?.toString() ?? null, diskUsedBytes: latest.diskUsedBytes?.toString() ?? null, diskTotalBytes: latest.diskTotalBytes?.toString() ?? null, networkRxBytes: latest.networkRxBytes?.toString() ?? null, networkTxBytes: latest.networkTxBytes?.toString() ?? null, uptimeSeconds: latest.uptimeSeconds?.toString() ?? null } : null
       };
     });

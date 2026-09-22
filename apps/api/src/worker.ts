@@ -1,11 +1,14 @@
 import { Worker, type Job } from "bullmq";
 import { loadConfig } from "./config.js";
 import { prisma } from "./db.js";
-import { QUEUE_NAME, redisConnection, type InfrastructureJobData } from "./queue.js";
+import { AGENT_QUEUE_NAME, QUEUE_NAME, redisConnection, type AgentJobData, type InfrastructureJobData } from "./queue.js";
 import { providerFor } from "./providers/factory.js";
 import { scheduleHost } from "./services/scheduler.js";
 import { cloudInit } from "./cloud-init.js";
 import { reconcile } from "./services/reconciliation.js";
+import { ControlLock } from "./services/control.js";
+import { ActivityHub } from "./services/activity.js";
+import { executeRun } from "./services/agent.js";
 
 const config=loadConfig();
 const finalStatus:Record<string,"RUNNING"|"STOPPED"|"SUSPENDED"|"DELETED">={PROVISION:"RUNNING",START:"RUNNING",STOP:"STOPPED",RESTART:"RUNNING",SUSPEND:"SUSPENDED",RESUME:"RUNNING",DELETE:"DELETED"};
@@ -27,6 +30,11 @@ async function processJob(job:Job<InfrastructureJobData>){
 }
 const worker=new Worker<InfrastructureJobData>(QUEUE_NAME,processJob,{connection:redisConnection(config),concurrency:5});
 worker.on("failed",(job,error)=>console.error(JSON.stringify({event:"job.failed",jobId:job?.id,message:error.message})));
+// Agent tasks run here too: one job = one AgentRun attached to an existing AI Computer. Both
+// processes share the same Redis control lock, so a human taking control pauses the agent.
+const control=new ControlLock(config);const activity=new ActivityHub(config);
+const agentWorker=new Worker<AgentJobData>(AGENT_QUEUE_NAME,async job=>{await executeRun(job.data.agentRunId,{config,control,activity});},{connection:redisConnection(config),concurrency:2});
+agentWorker.on("failed",(job,error)=>console.error(JSON.stringify({event:"agent.job_failed",agentRunId:job?.data.agentRunId,message:error.message})));
 const reconcileTimer=setInterval(()=>void reconcile(prisma,config),config.RECONCILIATION_INTERVAL_SECONDS*1000);reconcileTimer.unref();
 const metricsTimer=setInterval(async()=>{const computers=await prisma.computer.findMany({where:{status:"RUNNING",providerInstanceId:{not:null}},include:{host:{include:{credential:true}}}});for(const c of computers){if(!c.host||!c.providerInstanceId)continue;try{const m=await providerFor(c.host,config).getMetrics(c.providerInstanceId);const periodEnd=new Date();const periodStart=new Date(periodEnd.getTime()-config.METRICS_INTERVAL_SECONDS*1000);await prisma.$transaction([prisma.computerMetric.create({data:{computerId:c.id,...m,uptimeSeconds:m.uptimeSeconds==null?undefined:BigInt(m.uptimeSeconds)}}),prisma.usageRecord.create({data:{organizationId:c.organizationId,computerId:c.id,periodStart,periodEnd,runtimeSeconds:BigInt(config.METRICS_INTERVAL_SECONDS),vcpuSeconds:BigInt(c.vcpu*config.METRICS_INTERVAL_SECONDS),ramMbSeconds:BigInt(c.ramMb*config.METRICS_INTERVAL_SECONDS),storageGbHours:c.storageGb*(config.METRICS_INTERVAL_SECONDS/3600),networkRxBytes:m.networkRxBytes,networkTxBytes:m.networkTxBytes,source:`${c.provider}:worker`}})]);}catch{}}},config.METRICS_INTERVAL_SECONDS*1000);metricsTimer.unref();
-for(const signal of ["SIGTERM","SIGINT"]){process.on(signal,async()=>{await worker.close();await prisma.$disconnect();process.exit(0);});}
+for(const signal of ["SIGTERM","SIGINT"]){process.on(signal,async()=>{await agentWorker.close();await worker.close();await control.close();await activity.close();await prisma.$disconnect();process.exit(0);});}

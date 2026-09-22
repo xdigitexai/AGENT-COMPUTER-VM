@@ -81,6 +81,18 @@ enum SnapshotStatus {
   DELETING
   ERROR
 }
+// Lifecycle of one agent task bound to an existing AI Computer. The run attaches to a computer
+// that is already running, drives the visible desktop, and detaches without removing anything.
+enum AgentRunStatus {
+  QUEUED
+  ATTACHED
+  OBSERVING
+  ACTING
+  WAITING_FOR_HUMAN
+  COMPLETED
+  FAILED
+  DETACHED
+}
 model User {
   id String @id @default(uuid()) @db.Uuid
   email String @unique
@@ -255,6 +267,8 @@ model Computer {
   agentCredentials AgentCredential[]
   commandRequests CommandRequest[]
   usageRecords UsageRecord[]
+  agentRuns AgentRun[]
+  activityEvents ActivityEvent[]
   @@index([organizationId, status])
   @@index([hostId, status])
   @@unique([organizationId, name])
@@ -446,4 +460,48 @@ model SystemSetting {
   updatedById String? @db.Uuid
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+// One agent task bound to an existing AI Computer. `agentRunId` is what an agent passes to
+// attach/observe/actions so its work is attributed and visible in the live activity stream.
+model AgentRun {
+  id String @id @default(uuid()) @db.Uuid
+  computerId String @db.Uuid
+  organizationId String @db.Uuid
+  ownerId String @db.Uuid
+  actorId String
+  actorKind String @default("agent")
+  agentName String
+  title String
+  instruction String?
+  recipe String?
+  status AgentRunStatus @default(QUEUED)
+  source String @default("agent-api")
+  phase String?
+  result String?
+  lastError String?
+  startedAt DateTime @default(now())
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  computer Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  events ActivityEvent[]
+  @@index([computerId, status])
+  @@index([organizationId, createdAt])
+}
+// Append-only human-readable record of everything an agent or an operator did to a computer.
+// The live viewer tails it over the authenticated events WebSocket; Redis carries it live.
+model ActivityEvent {
+  id BigInt @id @default(autoincrement())
+  computerId String @db.Uuid
+  organizationId String @db.Uuid
+  agentRunId String? @db.Uuid
+  kind String
+  message String
+  severity String @default("info")
+  metadata Json?
+  createdAt DateTime @default(now())
+  computer Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  agentRun AgentRun? @relation(fields: [agentRunId], references: [id], onDelete: SetNull)
+  @@index([computerId, id])
+  @@index([organizationId, createdAt])
 }

@@ -13,5 +13,8 @@ export async function authenticate(request:FastifyRequest,reply:FastifyReply){
   return reply.code(401).send({error:{code:"UNAUTHENTICATED",message:"Authentication required"}});
 }
 export function requireScope(scope:string){return async(req:FastifyRequest,reply:FastifyReply)=>{await authenticate(req,reply);if(reply.sent)return;if(!req.auth?.scopes.includes("*")&&!req.auth?.scopes.includes(scope))return reply.code(403).send({error:{code:"INSUFFICIENT_SCOPE",message:`Required scope: ${scope}`}});};}
+// Some routes are shared by an agent (API key) and an operator (signed-in session) and therefore
+// accept either scope. Ownership is still enforced per request by the route itself.
+export function requireAnyScope(scopes:string[]){return async(req:FastifyRequest,reply:FastifyReply)=>{await authenticate(req,reply);if(reply.sent)return;const granted=req.auth?.scopes??[];if(!granted.includes("*")&&!scopes.some(scope=>granted.includes(scope)))return reply.code(403).send({error:{code:"INSUFFICIENT_SCOPE",message:`Required scope: ${scopes.join(" or ")}`}});};}
 export function requireRole(role:Role){return async(req:FastifyRequest,reply:FastifyReply)=>{await authenticate(req,reply);if(reply.sent)return;if(!req.auth||!roleAllows(req.auth.role,role))return reply.code(403).send({error:{code:"FORBIDDEN",message:"Insufficient role"}});};}
 export async function authPlugin(app:FastifyInstance){app.decorateRequest("auth",undefined);}
