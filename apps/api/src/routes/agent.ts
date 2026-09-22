@@ -220,7 +220,7 @@ export function agentRoutes(queue: Queue<AgentJobData>, config: Config, control:
         await prisma.agentRun.update({ where: { id: run.id }, data: { status: "WAITING_FOR_HUMAN", phase: input.reason ?? "Waiting for a human" } });
         await activity.tryRecord(prisma, { computerId: id, organizationId: req.auth!.organizationId, agentRunId: run.id, kind: "agent.waiting_for_human", message: "Agent paused — login required", severity: "warn", metadata: { reason: input.reason ?? "login required" } });
         await audit(req, id, "computer.controller.request", { agentRunId: run.id, by: "agent" });
-        return reply.code(202).send({ computerId: id, ...(await controllerSnapshot(id, control)) });
+        return reply.code(202).send(await controllerSnapshot(id, control));
       }
 
       const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, select: { email: true } });

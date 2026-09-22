@@ -119,7 +119,7 @@ export async function observeComputer(computerId: string, config: Config, option
     controller: "agent", observedAt: new Date().toISOString(),
     desktop: { width: geometry?.width ?? null, height: geometry?.height ?? null },
     browser: browser ? { browser: browser.browser, pages: browser.pages.map(page => ({ url: page.url, title: page.title })) } : null,
-    screenshot: screenshot ? { mimeType: screenshot.mimeType, bytes: screenshot.bytes, capturedAt: screenshot.capturedAt, imageBase64: screenshot.imageBase64 } : null
+    screenshot: screenshot ? { mimeType: screenshot.mimeType, bytes: screenshot.bytes, capturedAt: screenshot.capturedAt, imageBase64: screenshot.base64 } : null
   };
 }
 
