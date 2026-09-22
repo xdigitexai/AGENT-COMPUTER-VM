@@ -80,7 +80,8 @@ export function agentRoutes(queue: Queue<AgentJobData>, config: Config, control:
       return null;
     }
 
-    app.get("/:id/attach", { preHandler: eitherScope }, async (req, reply) => {
+    // Attach to an existing computer: creates (or reuses) an agent run bound to this computer.
+    app.post("/:id/attach", { preHandler: eitherScope }, async (req, reply) => {
       const { id } = computerId.parse(req.params);
       const input = z.object({
         agentRunId: z.string().uuid().optional(),
