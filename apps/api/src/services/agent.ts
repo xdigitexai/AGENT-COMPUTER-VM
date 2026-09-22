@@ -318,6 +318,44 @@ function genericRecipe(instruction: string): RecipeStep[] {
   ];
 }
 
+// A page that needs a password is the one thing an agent must never handle itself: it pauses,
+// hands the keyboard to a human on the live desktop, and picks the work up again afterwards.
+function humanSignInRecipe(instruction: string): RecipeStep[] {
+  const target = firstUrl(instruction) ?? "https://github.com/login";
+  const probe = "JSON.stringify({url:location.href,title:document.title,needsLogin:Boolean(document.querySelector('input[type=password]'))})";
+  return [
+    actionStep("Opening Chromium", { type: "focus_browser" }),
+    actionStep(`Navigating to ${describeHost(target)}`, { type: "browser_navigate", url: target }),
+    actionStep("Looking at the page", { type: "screenshot" }),
+    {
+      label: "Checking whether a human sign-in is required",
+      run: async bag => {
+        const raw = await browserEvaluate(bag.context.provider, bag.context.instanceId, bag.context.cdpPort, probe);
+        const page = typeof raw === "string" ? (JSON.parse(raw) as PageProbe) : (raw as PageProbe | null);
+        if (page?.needsLogin) {
+          bag.needsHuman = "A password field is on screen, so a human has to sign in";
+          return { ok: true, message: "This page needs a human sign-in — asking the operator to take control", detail: { url: page.url, title: page.title } };
+        }
+        return { ok: true, message: "No sign-in was required", detail: { url: page?.url ?? "", title: page?.title ?? "" } };
+      }
+    },
+    {
+      label: "Re-checking the page after the human released control",
+      run: async bag => {
+        const raw = await browserEvaluate(bag.context.provider, bag.context.instanceId, bag.context.cdpPort, probe);
+        const page = typeof raw === "string" ? (JSON.parse(raw) as PageProbe) : (raw as PageProbe | null);
+        bag.notes.afterHuman = page;
+        return { ok: true, message: page?.needsLogin ? "The sign-in form is still on screen" : "The sign-in form is gone — continuing after the human", detail: { url: page?.url ?? "", title: page?.title ?? "" } };
+      }
+    },
+    actionStep("Captured the page after human control", { type: "screenshot" })
+  ];
+}
+
+function describeHost(value: string): string {
+  try { return new URL(value).hostname; } catch { return value.slice(0, 80); }
+}
+
 export function firstUrl(input: string | null | undefined): string | null {
   const match = input?.match(/https?:\/\/[^\s"'<>]+/);
   return match ? match[0] : null;
@@ -327,6 +365,7 @@ export const recipes: AgentRecipe[] = [
   { id: "github-repository-check", title: "Open GitHub and check my repository", description: "Opens the visible Chromium, searches GitHub for xdigitexai, opens the first public repository, inspects it, and writes its name to ~/Desktop/agent-live-test.txt in a visible terminal.", build: () => githubRepositoryRecipe() },
   { id: "web-search-download", title: "Search the web and download a file", description: "Searches the web in the visible Chromium, then downloads a benign file into ~/Downloads from a visible terminal.", build: () => webSearchDownloadRecipe() },
   { id: "dashboard-configuration-check", title: "Open my dashboard and fix the configuration", description: "Opens the dashboard URL named in the task in the visible Chromium, inspects its configuration surface and reports findings. A configuration change needs a site-specific recipe.", build: input => dashboardRecipe(input.instruction) },
+  { id: "wait-for-human-signin", title: "Open a sign-in page and wait for a human", description: "Opens the sign-in URL named in the task (github.com/login by default) in the visible Chromium, sets WAITING_FOR_HUMAN when it sees a password field, waits for the operator to sign in and release control, then re-screenshots and continues.", build: input => humanSignInRecipe(input.instruction) },
   { id: "generic-browse", title: "Open a page and report what is there", description: "Opens the first URL mentioned in the task in the visible Chromium and reports the page title and visible text.", build: input => genericRecipe(input.instruction) }
 ];
 
@@ -340,8 +379,9 @@ export function chooseRecipe(instruction: string | null | undefined, requested?:
   const text = (instruction ?? "").toLowerCase();
   if (/github/.test(text)) return recipes[0] as AgentRecipe;
   if (/download|search the web|web search/.test(text)) return recipes[1] as AgentRecipe;
+  if (/sign in|signin|log ?in|password/.test(text)) return recipes[3] as AgentRecipe;
   if (/dashboard|configuration|config/.test(text)) return recipes[2] as AgentRecipe;
-  return recipes[3] as AgentRecipe;
+  return recipes[4] as AgentRecipe;
 }
 
 // ---------------------------------------------------------------------------------------------
