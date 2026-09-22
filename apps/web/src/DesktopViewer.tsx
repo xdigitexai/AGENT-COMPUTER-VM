@@ -23,6 +23,14 @@ interface DesktopStatus {
 }
 
 const gb = (value: string | null | undefined, digits = 2) => (value == null ? "—" : `${(Number(value) / 1073741824).toFixed(digits)} GB`);
+const bytes = (value: string | null | undefined) => {
+  if (value == null) return "—";
+  const size = Number(value);
+  if (size >= 1073741824) return `${(size / 1073741824).toFixed(2)} GB`;
+  if (size >= 1048576) return `${(size / 1048576).toFixed(1)} MB`;
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${size} B`;
+};
 const percent = (value: number | null | undefined) => (value == null ? "—" : `${value.toFixed(1)}%`);
 function duration(seconds: number | null | undefined) {
   if (seconds == null) return "—";
@@ -258,8 +266,8 @@ export function DesktopViewer({ id }: { id: string }) {
         <Info label="IP address (internal)" value={status?.ipv4 ?? "—"} mono />
         <Info label="Desktop resolution" value={status?.desktop.width ? `${status.desktop.width}×${status.desktop.height}` : "—"} />
         <Info label="Browser" value={status?.desktop.browser ? `${status.desktop.browser}${status.desktop.browserRunning ? "" : " (not running)"}` : "—"} />
-        <Info label="Network received" value={metrics ? gb(metrics.networkRxBytes) : "collecting…"} />
-        <Info label="Network sent" value={metrics ? gb(metrics.networkTxBytes) : "collecting…"} />
+        <Info label="Network received" value={metrics ? bytes(metrics.networkRxBytes) : "collecting…"} />
+        <Info label="Network sent" value={metrics ? bytes(metrics.networkTxBytes) : "collecting…"} />
         <Info label="Image" value={status ? `${status.image.name} ${status.image.version}` : "—"} />
         <Info label="Metrics sampled" value={metrics ? new Date(metrics.observedAt).toLocaleTimeString() : "collecting…"} />
       </div>
