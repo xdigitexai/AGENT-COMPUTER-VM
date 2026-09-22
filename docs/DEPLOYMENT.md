@@ -140,15 +140,17 @@ sudo journalctl -u <worker-service-name> -n 100 --no-pager
 
 1. In the user console, select **XDIGITEX Ubuntu Agent**, a plan, and `local-1`.
 2. Confirm the job progresses `CREATING → PROVISIONING → RUNNING`.
-3. On the host, run `sudo docker ps --filter label=xdigitex.managed=true`. Inspect the container and verify `Privileged=false`, `ReadonlyRootfs=true`, all capabilities dropped, `NanoCpus`, `Memory`, `MemorySwap`, `PidsLimit`, no published ports, and only the `/workspace` named volume.
-4. Use the authenticated command endpoint to write a marker under `/workspace`. Stop and start the AI Computer, then read the marker and confirm persistence.
-5. Confirm CPU, memory and network metrics appear from Docker stats. Exercise load inside the computer and verify Docker enforces CPU/RAM limits.
-6. Confirm an ordinary user cannot read, start, stop, execute in or delete another organization's computer.
-7. Delete the test computer and verify both its managed container and workspace volume are removed. Unknown/orphan resources must only be reported by reconciliation, never automatically removed.
+3. On the host, run `sudo docker ps --filter label=xdigitex.managed=true`. Inspect the container and verify `Privileged=false`, `ReadonlyRootfs=true`, all capabilities dropped, `NanoCpus`, `Memory`, `MemorySwap`, `PidsLimit`, no published ports, and only the `/home/agent` named volume.
+4. Open the computer in the console and confirm the embedded noVNC desktop shows a live 1440x900 XFCE screen over authenticated WSS, that the connection status reads Online, and that the raw VNC port is not reachable from the host (`ss -lntp | grep 5901` must show nothing on the host).
+5. Use the authenticated desktop actions to move the mouse, type text and open a terminal, then capture a screenshot and confirm the visible desktop changed. While a human holds control from the console, confirm an API key gets `409 CONTROLLER_BUSY` for input actions and `403 HUMAN_REQUIRED` for take/release control.
+6. Use the authenticated command endpoint to write a marker under `/home/agent`. Stop and start the AI Computer, then read the marker and confirm persistence, including the Chromium profile.
+7. Confirm CPU, memory, disk and network metrics appear from Docker stats. Exercise load inside the computer and verify Docker enforces CPU/RAM limits.
+8. Confirm an ordinary user cannot read, start, stop, execute in or delete another organization's computer.
+9. Delete the test computer and verify both its managed container and home volume are removed. Unknown/orphan resources must only be reported by reconciliation, never automatically removed.
 
 ### 7. Moving a workload to Proxmox later
 
-Docker and Proxmox hosts coexist behind the provider interface. Register the Proxmox host and a compatible image, then create new AI Computers on that provider/region. Live cross-provider migration is not implemented: copy `/workspace` through an authorized export/import workflow, verify it, and delete the original only after acceptance. Existing Docker computers remain Docker-backed for their lifetime.
+Docker and Proxmox hosts coexist behind the provider interface. Register the Proxmox host and a compatible image, then create new AI Computers on that provider/region. Live cross-provider migration is not implemented: copy `/home/agent` through an authorized export/import workflow, verify it, and delete the original only after acceptance. Existing Docker computers remain Docker-backed for their lifetime.
 
 ## Rollback
 

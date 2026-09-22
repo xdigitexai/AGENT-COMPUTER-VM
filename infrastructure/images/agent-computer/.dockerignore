@@ -1,3 +1,6 @@
 *
 !.dockerignore
 !Dockerfile
+!xdigitex-desktop
+!xdigitex-browser
+!xdigitex-browser.desktop

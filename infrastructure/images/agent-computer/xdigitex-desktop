@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# XDIGITEX Agent Computer desktop session supervisor.
+#
+# Runs as PID 1 (after docker-init) inside the AI Computer container and keeps a real
+# X11 desktop alive: Xvfb -> x11vnc (loopback only) -> XFCE session -> visible Chromium.
+# noVNC/websockify exposes the screen on the container-internal desktop port, which the
+# control plane bridges over an authenticated WebSocket. Nothing is published to the host.
+set -u
+
+GEOMETRY="${XDIGITEX_GEOMETRY:-1440x900}"
+export DISPLAY="${DISPLAY:-:1}"
+VNC_PORT="${XDIGITEX_VNC_PORT:-5901}"
+DESKTOP_PORT="${XDIGITEX_DESKTOP_PORT:-6080}"
+export XDIGITEX_CDP_PORT="${XDIGITEX_CDP_PORT:-9222}"
+
+HOME_DIR="${HOME:-/home/agent}"
+STATE_DIR="${HOME_DIR}/.xdigitex"
+LOG_FILE="${STATE_DIR}/desktop.log"
+RESTART_FLAG="${STATE_DIR}/.session-restart"
+SOCKET="/tmp/.X11-unix/X${DISPLAY#:}"
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME_DIR}/.config}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME_DIR}/.cache}"
+
+mkdir -p "${STATE_DIR}" "${HOME_DIR}/Desktop" "${XDG_RUNTIME_DIR}" 2>/dev/null || true
+chmod 700 "${XDG_RUNTIME_DIR}" 2>/dev/null || true
+
+log() { printf '%s [desktop] %s\n' "$(date -Is)" "$*" >>"${LOG_FILE}" 2>/dev/null || true; }
+
+stop_pids() {
+  local pid
+  for pid in "$@"; do
+    [ -n "${pid}" ] || continue
+    kill -TERM "${pid}" 2>/dev/null || true
+  done
+  sleep 1
+  for pid in "$@"; do
+    [ -n "${pid}" ] || continue
+    kill -KILL "${pid}" 2>/dev/null || true
+  done
+}
+
+kill_session_processes() {
+  pkill -TERM -u "$(id -u)" -f 'chrome|chromium|xfwm4|xfdesktop|xfsettingsd|xfce4-panel|xfce4-session|thunar|xfconfd' 2>/dev/null || true
+  sleep 1
+  pkill -KILL -u "$(id -u)" -f 'chrome|chromium|xfwm4|xfdesktop|xfsettingsd|xfce4-panel|xfce4-session|thunar|xfconfd' 2>/dev/null || true
+}
+
+cleanup() {
+  stop_pids "${chromium_pid:-}" "${session_pid:-}" "${websockify_pid:-}" "${vnc_pid:-}" "${xvfb_pid:-}"
+  kill_session_processes
+  rm -f "${SOCKET}" 2>/dev/null || true
+}
+
+on_signal() {
+  log "received shutdown signal"
+  cleanup
+  exit 0
+}
+trap on_signal TERM INT
+
+wait_for_x() {
+  local i
+  for i in $(seq 1 100); do
+    [ -S "${SOCKET}" ] && return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+start_session() {
+  log "starting desktop session geometry=${GEOMETRY} display=${DISPLAY} vnc=127.0.0.1:${VNC_PORT} novnc=0.0.0.0:${DESKTOP_PORT} cdp=${XDIGITEX_CDP_PORT}"
+  rm -f "${SOCKET}" 2>/dev/null || true
+
+  Xvfb "${DISPLAY}" -screen 0 "${GEOMETRY}x24" -ac -nolisten tcp -noreset >>"${LOG_FILE}" 2>&1 &
+  xvfb_pid=$!
+  if ! wait_for_x; then
+    log "FATAL: X server socket ${SOCKET} never appeared"
+    return 1
+  fi
+  log "X server ready on ${DISPLAY}"
+
+  x11vnc -display "${DISPLAY}" -rfbport "${VNC_PORT}" -localhost -forever -shared \
+         -nopw -quiet -repeat -o "${STATE_DIR}/x11vnc.log" >>"${LOG_FILE}" 2>&1 &
+  vnc_pid=$!
+  sleep 1
+
+  websockify --web=/usr/share/novnc "${DESKTOP_PORT}" "127.0.0.1:${VNC_PORT}" >>"${LOG_FILE}" 2>&1 &
+  websockify_pid=$!
+  sleep 1
+
+  dbus-run-session -- startxfce4 >>"${LOG_FILE}" 2>&1 &
+  session_pid=$!
+  sleep 8
+
+  /usr/local/bin/xdigitex-browser >>"${LOG_FILE}" 2>&1 &
+  chromium_pid=$!
+
+  return 0
+}
+
+while :; do
+  rm -f "${RESTART_FLAG}" 2>/dev/null || true
+  if start_session; then
+    log "desktop session is up"
+  else
+    log "desktop session failed to start; retrying"
+    cleanup
+    sleep 5
+    continue
+  fi
+
+  while :; do
+    if [ -e "${RESTART_FLAG}" ]; then
+      log "desktop restart requested"
+      break
+    fi
+    if ! kill -0 "${xvfb_pid}" 2>/dev/null; then
+      log "X server exited"
+      break
+    fi
+    if ! kill -0 "${vnc_pid}" 2>/dev/null; then
+      log "x11vnc exited"
+      break
+    fi
+    if ! kill -0 "${websockify_pid}" 2>/dev/null; then
+      log "websockify exited"
+      break
+    fi
+    if ! kill -0 "${session_pid}" 2>/dev/null; then
+      log "XFCE session exited"
+      break
+    fi
+    sleep 2
+  done
+
+  cleanup
+  log "desktop session stopped; restarting in 3s"
+  sleep 3
+done

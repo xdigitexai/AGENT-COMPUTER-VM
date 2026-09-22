@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Launch (or reuse) the visible Chromium instance on the XFCE display.
+#
+# Chromium runs headful inside the desktop session and also exposes the DevTools
+# protocol so the control plane can drive real browser work over CDP. The profile
+# lives in the persistent home volume, so cookies, history and sessions survive
+# stop/start of the AI Computer.
+set -u
+
+export DISPLAY="${DISPLAY:-:1}"
+export HOME="${HOME:-/home/agent}"
+CDP_PORT="${XDIGITEX_CDP_PORT:-9222}"
+PROFILE="${XDIGITEX_CHROMIUM_PROFILE:-${HOME}/.config/chromium-agent}"
+STATE_DIR="${HOME}/.xdigitex"
+URL="${1:-}"
+
+mkdir -p "${PROFILE}" "${STATE_DIR}" 2>/dev/null || true
+LOG="${STATE_DIR}/chromium.log"
+
+cdp_new_tab() {
+  python3 - "$1" <<'PY' >/dev/null 2>&1
+import sys, urllib.parse, urllib.request
+url = sys.argv[1]
+target = "http://127.0.0.1:%s/json/new?%s" % (__import__("os").environ.get("CDP_PORT", "9222"), urllib.parse.quote(url, safe=""))
+request = urllib.request.Request(target, method="PUT")
+try:
+    urllib.request.urlopen(request, timeout=5).read()
+except Exception:
+    pass
+PY
+}
+
+if pgrep -u "$(id -u)" -f -- "--user-data-dir=${PROFILE}" >/dev/null 2>&1; then
+  # Chromium is already on screen: open the requested URL as an additional visible tab.
+  if [ -n "${URL}" ]; then
+    CDP_PORT="${CDP_PORT}" cdp_new_tab "${URL}"
+  fi
+  exit 0
+fi
+
+CHROMIUM="${XDIGITEX_CHROMIUM_BIN:-/usr/local/bin/chromium}"
+if [ ! -x "${CHROMIUM}" ]; then
+  echo "chromium binary is missing at ${CHROMIUM}" >&2
+  exit 1
+fi
+
+nohup "${CHROMIUM}" \
+  --no-sandbox \
+  --disable-gpu \
+  --disable-dev-shm-usage \
+  --remote-debugging-port="${CDP_PORT}" \
+  --remote-debugging-address=0.0.0.0 \
+  --remote-allow-origins='*' \
+  --user-data-dir="${PROFILE}" \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-session-crashed-bubble \
+  --password-store=basic \
+  --window-position=0,0 \
+  --window-size=1440,860 \
+  "${URL:-about:blank}" >>"${LOG}" 2>&1 &
+disown
+
+exit 0

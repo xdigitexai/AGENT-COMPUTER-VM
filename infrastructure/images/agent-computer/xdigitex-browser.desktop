@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Chromium
+Comment=Visible Chromium browser for the XDIGITEX agent desktop
+Exec=/usr/local/bin/xdigitex-browser
+Terminal=false
+X-GNOME-Autostart-enabled=true

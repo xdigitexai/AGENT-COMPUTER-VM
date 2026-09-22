@@ -28,6 +28,9 @@ export interface VirtualizationProvider {
   resizeComputer(id: string, input: ResizeInput): Promise<void>;
   listHostResources(): Promise<HostResources>;
   createConsoleSession(id: string): Promise<ConsoleSession>;
+  // Optional: providers that can expose a live desktop report how the control plane should reach
+  // it. The Docker provider returns an internal websockify target that is never published.
+  getDesktopEndpoint?(id: string): Promise<{ ipv4: string | null; port: number; cdpPort: number; websockifyUrl: string } | null>;
   executeCommand?(id:string,input:ExecuteInput):Promise<ExecuteResult>;
   listManagedComputers?():Promise<ManagedComputerResource[]>;
   healthCheck(): Promise<ProviderHealth>;
