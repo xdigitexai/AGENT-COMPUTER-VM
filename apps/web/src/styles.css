@@ -18,10 +18,10 @@
 .conn-agent{color:#9ec6f0;border-color:#264a6e}.conn-agent i{background:#5aa9e6}
 .desktop-sub{margin:9px 0 0;color:#78808d;font-size:12px;overflow-wrap:anywhere}
 .desktop-actions{display:flex;gap:7px;flex-wrap:wrap}
-.desktop-stage{position:relative;background:#05070a;border:1px solid #20242c;border-radius:10px;overflow:hidden;height:min(72vh,900px);min-height:420px}
-.desktop-stage.fullscreen{height:100vh;border-radius:0;border:0}
-.desktop-screen{position:absolute;inset:0}
-.desktop-screen canvas{width:100%!important;height:100%!important;display:block;outline:none}
+.desktop-stage{position:relative;background:#05070a;border:1px solid #20242c;border-radius:10px;overflow:hidden;aspect-ratio:16/10;min-height:300px}
+.desktop-stage.fullscreen{aspect-ratio:auto;width:100vw;height:100vh;border-radius:0;border:0}
+.desktop-screen{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.desktop-screen canvas{max-width:100%;max-height:100%;display:block;outline:none;margin:auto}
 .desktop-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;color:#8b93a0;background:#05070a}
 .desktop-overlay.soft{background:rgba(5,7,10,.82)}
 .desktop-overlay h3{color:#e2e6ec;margin:6px 0 0;font-size:15px}
@@ -48,12 +48,12 @@
 .console-form input{background:#0a0d11;border:1px solid #292e37;color:#e8ebf0;border-radius:7px;padding:10px 11px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;outline:none}
 .console-form input:focus{border-color:#9f8148}
 .danger-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:22px;padding-top:18px;border-top:1px solid #20242c;color:#6f7785;font-size:11.5px}
-@media(max-width:900px){.info-grid{grid-template-columns:1fr 1fr}.desktop-stage{height:52vh}}
-@media(max-width:560px){.info-grid{grid-template-columns:1fr}.desktop-stage{height:44vh}.console-form{grid-template-columns:1fr}}
+@media(max-width:900px){.info-grid{grid-template-columns:1fr 1fr}.desktop-stage{max-height:52vh}}
+@media(max-width:560px){.info-grid{grid-template-columns:1fr}.desktop-stage{max-height:44vh}.console-form{grid-template-columns:1fr}}
 
 /* Live desktop + live activity panel. The panel sits beside the desktop so it never covers it. */
-.desktop-layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:14px;align-items:stretch}
-.activity-panel{display:flex;flex-direction:column;background:#0e1116;border:1px solid #20242c;border-radius:10px;overflow:hidden;max-height:min(72vh,900px);min-height:420px}
+.desktop-layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:14px;align-items:start}
+.activity-panel{display:flex;flex-direction:column;background:#0e1116;border:1px solid #20242c;border-radius:10px;overflow:hidden;max-height:min(62vh,660px)}
 .activity-head{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid #1c2028;background:#0b0e13}
 .activity-head>div{display:flex;align-items:center;gap:7px;font-size:12px;color:#e2e6ec}
 .activity-head svg{color:#b4924f}

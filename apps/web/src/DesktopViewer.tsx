@@ -269,7 +269,9 @@ export function DesktopViewer({ id }: { id: string }) {
     const stage = stageRef.current;
     if (!stage) return;
     try { if (document.fullscreenElement) await document.exitFullscreen(); else await stage.requestFullscreen(); }
-    catch { setError("This browser blocked full screen mode"); }
+    catch { setError("This browser blocked full screen mode"); return; }
+    // noVNC re-fits itself from its ResizeObserver; nudge it once the layout has settled.
+    window.setTimeout(() => { const rfb = rfbRef.current; if (rfb) rfb.scaleViewport = true; }, 250);
   }, []);
 
   // "Use with Agent": start a task on THIS computer — same id, same visible desktop.
