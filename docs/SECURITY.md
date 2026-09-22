@@ -41,6 +41,24 @@ The shared-control lock is enforced in Redis and checked on the server for every
 in the interface: while a human operator holds control, agent input from an API key is refused with
 `409 CONTROLLER_BUSY`, and only an interactive signed-in session can take or release control.
 
+## Agent sessions and the live activity stream
+
+An agent attaches to a computer that is already running; it never provisions hardware and never
+opens a browser of its own. Browser work goes over the DevTools protocol to the Chromium process
+that owns the visible X desktop, and desktop work goes through `xdotool` against the same X server,
+so every action a human can see is an action the agent really performed on screen.
+
+`ActivityEvent` rows are written for agent and operator actions alike and are owner-scoped: the
+`/api/v1/events?computerId=` WebSocket authenticates the caller, verifies the computer belongs to
+the caller's organization, and only then tails that computer's Redis channel. A computer owned by
+another organization is indistinguishable from one that does not exist. Activity metadata never
+contains typed text, cookies or credentials.
+
+When an agent reaches a page that needs a password it must not sign in itself: it sets
+`WAITING_FOR_HUMAN`, the console shows "Agent paused — login required", and the operator types the
+credentials directly into the live desktop. The agent is only told that control was released. It
+never receives the credentials and must never ask for them over chat.
+
 
 Linux containers share the host kernel and provide a weaker isolation boundary than hardware-backed VMs. Keep Docker, the host kernel and the base image patched; use seccomp/AppArmor defaults; consider rootless Docker or an additional sandbox such as gVisor where supported; and place mutually untrusted high-risk tenants on separate hosts or Proxmox VMs.
 

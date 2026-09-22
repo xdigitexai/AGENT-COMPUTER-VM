@@ -35,6 +35,11 @@ Run migrations once as a release step before starting the new API and worker ver
 
 Start at least one API process with `pnpm start:api`, one infrastructure worker with `pnpm start:worker`, and serve `apps/web/dist` through the reverse proxy. Only the API receives public traffic. Workers need PostgreSQL, Redis and provider-network access. Configure graceful shutdown and restart policies. Run only one reconciliation leader until distributed locking is added.
 
+The worker also consumes the `agent-runs` queue: one job is one agent run attached to an existing
+AI Computer. If the worker is not running, `POST /computers/:id/attach` still attaches and returns
+the run, but the queued task stays queued; the console can execute a single run inline with
+`POST /computers/:id/agent-runs/:runId/execute`.
+
 ## Bootstrap
 
 Create the first `SUPER_ADMIN` through an audited, one-time database/bootstrap procedure. In the admin API, create plans, Ubuntu 24.04 image mappings, and a Proxmox host. The host write payload includes `tokenId`, `tokenSecret`, storage pool and bridge; the API encrypts this data.
@@ -53,6 +58,8 @@ Confirm the Proxmox token has the minimum permissions documented in `docs/PROVID
 8. Disconnect provider access and verify reconciliation marks affected state unavailable without deleting records.
 9. Confirm real metrics populate after the worker interval; otherwise the UI must say “Metrics unavailable.”
 10. Inspect logs and responses for credential leakage, then revoke the test API key and provider token if the environment is disposable.
+11. Attach an agent to a running AI Computer (`POST /computers/:id/attach`), confirm `GET /computers/:id/observe` returns a screenshot, drive one action from every type in `POST /computers/:id/actions`, then `POST /computers/:id/detach` and confirm the computer and its visible desktop are untouched.
+12. While the agent is working, take control from the console and confirm agent actions are refused with `409 CONTROLLER_BUSY`; release control and confirm the run resumes. Confirm the live activity panel shows both sides of the exchange.
 
 ## Single-VPS Docker Compute Deployment
 
