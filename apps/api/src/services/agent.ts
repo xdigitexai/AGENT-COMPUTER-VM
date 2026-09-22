@@ -3,7 +3,7 @@ import type { Config } from "../config.js";
 import { prisma } from "../db.js";
 import { providerFor } from "../providers/factory.js";
 import { ProviderError, type VirtualizationProvider } from "../providers/types.js";
-import { performAction, type ActionContext, type AgentAction } from "./agent-actions.js";
+import { performAction, safeActivityMetadata, type ActionContext, type AgentAction } from "./agent-actions.js";
 import { browserEvaluate, browserState, captureScreenshot, displayGeometry } from "./desktop.js";
 import type { ControlLock } from "./control.js";
 import type { ActivityHub } from "./activity.js";
@@ -459,9 +459,9 @@ export async function executeRun(runId: string, deps: ExecutorDeps): Promise<{ s
       await setRun(runId, { status: "ACTING", phase: step.label });
       await say("agent.step", step.label);
       const outcome = await step.run(bag);
-      if (outcome.ok) await say("agent.step.completed", outcome.message, "success", outcome.detail);
+      if (outcome.ok) await say("agent.step.completed", outcome.message, "success", safeActivityMetadata(outcome.detail));
       else {
-        await say("agent.step.failed", outcome.message, "error", outcome.detail);
+        await say("agent.step.failed", outcome.message, "error", safeActivityMetadata(outcome.detail));
         await finishRun(runId, "FAILED", { lastError: outcome.message });
         await say("agent.detached", `Agent detached — task failed: ${outcome.message}`, "error");
         return { status: "FAILED", lastError: outcome.message };

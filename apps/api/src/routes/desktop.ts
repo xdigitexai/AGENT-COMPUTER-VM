@@ -9,7 +9,7 @@ import type { Config } from "../config.js";
 import type { ControlLock } from "../services/control.js";
 import type { ActivityHub } from "../services/activity.js";
 import { activeRunFor, controllerSnapshot } from "../services/agent.js";
-import { browserNavigate, browserOpenTab, browserState, captureScreenshot, displayGeometry, inputCommands, openWebSocket, run, type SocketLike } from "../services/desktop.js";
+import { browserNavigate, browserOpenTab, browserState, captureScreenshot, displayGeometry, inputCommands, openWebSocket, redactUrl, run, type SocketLike } from "../services/desktop.js";
 
 const computerId = z.object({ id: z.string().uuid() });
 const coordinate = z.number().int().min(0).max(16384);
@@ -222,7 +222,7 @@ export function desktopRoutes(config: Config, control: ControlLock, activity: Ac
               desktop.height = geometry?.height;
               desktop.browserRunning = Boolean(browser);
               desktop.browser = browser?.browser ?? null;
-              desktop.pages = browser?.pages.map(page => ({ url: page.url, title: page.title }));
+              desktop.pages = browser?.pages.map(page => ({ url: redactUrl(page.url), title: page.title }));
               if (!geometry) desktop.reason = "The desktop session has not reported a display geometry yet";
             } else desktop.reason = `The AI Computer is ${inspected.status}`;
           }

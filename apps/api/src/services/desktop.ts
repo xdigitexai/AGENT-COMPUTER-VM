@@ -100,6 +100,12 @@ export function openWebSocket(url: string, protocols?: string[]): SocketLike {
 export interface CdpPage { id: string; url: string; title: string; }
 export interface BrowserState { browser: string | null; pages: CdpPage[]; }
 
+// A token pasted into a URL must not travel back out through the console API: keep origin + path.
+export function redactUrl(value: string): string {
+  try { const url = new URL(value); return `${url.origin}${url.pathname}`; }
+  catch { return value.split(/[?#]/)[0] ?? value; }
+}
+
 // Chromium runs headful on the XFCE desktop and also exposes the DevTools protocol, so browser
 // work is done over the real protocol against that same visible window instead of a separate
 // headless browser. There is exactly one Chromium process on this computer: the one on screen.

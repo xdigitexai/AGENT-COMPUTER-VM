@@ -45,6 +45,24 @@ export interface ActionContext {
 
 export interface ActionResult { ok: boolean; message: string; detail: Record<string, unknown>; }
 
+// Only operational facts belong in the durable, owner-visible activity stream. Values read *out*
+// of the computer (page text, DOM reads, command output, cookies) stay in the action response for
+// the caller and are never persisted where they could be replayed later.
+const SAFE_METADATA_KEYS = ["method", "exitCode", "bytes", "length", "selector", "key", "direction", "amount", "clicks", "button", "ms", "opened", "capturedAt"] as const;
+const SAFE_METADATA_MAX_STRING = 120;
+
+export function safeActivityMetadata(detail: Record<string, unknown> | undefined): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+  if (!detail) return safe;
+  for (const key of SAFE_METADATA_KEYS) {
+    const value = detail[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string") safe[key] = value.slice(0, SAFE_METADATA_MAX_STRING);
+    else if (typeof value === "number" || typeof value === "boolean") safe[key] = value;
+  }
+  return safe;
+}
+
 /** A short, safe label for a URL: the activity stream must never leak query secrets. */
 export function describeUrl(value: string): string {
   try {

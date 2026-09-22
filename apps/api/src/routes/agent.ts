@@ -12,7 +12,7 @@ import {
   ACTIVE_RUN_STATUSES, activeRunFor, chooseRecipe, computerContext, controllerSnapshot, createRun,
   executeRun, finishRun, latestRunFor, observeComputer, recipes, toRunView
 } from "../services/agent.js";
-import { agentActionTypes, performAction, type AgentAction } from "../services/agent-actions.js";
+import { agentActionTypes, performAction, safeActivityMetadata, type AgentAction } from "../services/agent-actions.js";
 
 // The XDIGITEX Agent API: an agent attaches to an AI Computer that is already running, observes
 // it, acts on it, and detaches. Nothing here creates or deletes a computer, and every action is
@@ -189,7 +189,7 @@ export function agentRoutes(queue: Queue<AgentJobData>, config: Config, control:
       await activity.tryRecord(prisma, {
         computerId: id, organizationId: req.auth!.organizationId, agentRunId: input.agentRunId ?? null,
         kind: `agent.action.${action.type}`, message: input.label ?? result.message,
-        severity: result.ok ? "info" : "error", metadata: result.detail
+        severity: result.ok ? "info" : "error", metadata: safeActivityMetadata(result.detail)
       });
       await audit(req, id, "computer.agent.action", { type: action.type, ok: result.ok, agentRunId: input.agentRunId ?? null });
       const payload = { computerId: id, action: action.type, ok: result.ok, message: result.message, detail: result.detail };
