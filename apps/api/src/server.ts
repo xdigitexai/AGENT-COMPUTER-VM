@@ -19,13 +19,13 @@ import { ActivityHub } from "./services/activity.js";
 import { createAgentQueue, createInfrastructureQueue } from "./queue.js";
 import { prisma } from "./db.js";
 
-// Prisma maps 64-bit integer columns (metrics, uptime, usage) to BigInt, and JSON.stringify
-// throws "Do not know how to serialize a BigInt". Without this, a successful operation is
-// returned as HTTP 500 during response serialization.
-(BigInt.prototype as unknown as {toJSON:()=>number}).toJSON=function(this:bigint){return Number(this)};
+// Prisma maps 64-bit integer columns (metrics, uptime, usage and activity IDs) to BigInt.
+// JSON cannot encode BigInt natively. Serialize it as a decimal string so successful requests
+// never become HTTP 500 during response encoding and 64-bit values are never rounded.
+(BigInt.prototype as unknown as {toJSON:()=>string}).toJSON=function(this:bigint){return this.toString()};
 const config=loadConfig();const app=Fastify({logger:{level:config.LOG_LEVEL,redact:["req.headers.authorization","req.headers.cookie","password","token","secret","credential","encryptedValue"]},trustProxy:config.TRUST_PROXY==="true",bodyLimit:1024*1024});const queue=createInfrastructureQueue(config);
 await app.register(helmet,{contentSecurityPolicy:false});await app.register(cors,{origin:config.WEB_ORIGIN,credentials:true});await app.register(cookie,{secret:config.SESSION_SECRET});await app.register(rateLimit,{max:120,timeWindow:"1 minute"});await app.register(websocket);await app.register(authPlugin);
-app.setErrorHandler((error,req,reply)=>{if(error instanceof ZodError)return reply.code(400).send({error:{code:"VALIDATION_ERROR",message:"Invalid request",details:error.flatten()}});const status=(error as any).statusCode??500;req.log.error({err:error},"request failed");return reply.code(status).send({error:{code:(error as any).code??"INTERNAL_ERROR",message:status>=500?"Internal server error":(error as Error).message}});});
+app.setErrorHandler((error,req,reply)=>{if(error instanceof ZodError)return reply.code(400).send({error:{code:"VALIDATION_ERROR",message:"Invalid request",details:error.flatten()}});const code=(error as any).code;const prismaUnavailable=code==="P1001"||code==="P1002"||code==="P2021"||code==="P2022";const status=prismaUnavailable?503:((error as any).statusCode??500);req.log.error({err:error},"request failed");return reply.code(status).send({error:{code:prismaUnavailable?"SERVICE_UNAVAILABLE":(code??"INTERNAL_ERROR"),message:prismaUnavailable?"AI Computer control plane is temporarily unavailable":status>=500?"Internal server error":(error as Error).message}});});
 const control=new ControlLock(config);const activity=new ActivityHub(config);const agentQueue=createAgentQueue(config);
 await app.register(authRoutes,{prefix:"/api/v1/auth"});
 // Computers are exposed under the versioned API and, unchanged, under /api/computers.
