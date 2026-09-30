@@ -10,8 +10,9 @@ import { openWebSocket, type SocketLike } from "../services/desktop.js";
 const idSchema=z.object({id:z.string().uuid()});
 const viewerParams=z.object({id:z.string().uuid(),token:z.string().min(20),"*":z.string().optional()});
 type ViewerClaims={computerId:string;organizationId:string;exp:number};
-const b64=value=>Buffer.from(value,"utf8").toString("base64url");
-const unb64=value=>Buffer.from(value,"base64url").toString("utf8");
+type DesktopEndpoint={ipv4:string|null;port:number;cdpPort:number;websockifyUrl:string};
+const b64=(value:string)=>Buffer.from(value,"utf8").toString("base64url");
+const unb64=(value:string)=>Buffer.from(value,"base64url").toString("utf8");
 
 function sign(config:Config,claims:ViewerClaims){
   const body=b64(JSON.stringify(claims));
@@ -27,9 +28,10 @@ function verify(config:Config,token:string):ViewerClaims|null{
   try{const claims=JSON.parse(unb64(body)) as ViewerClaims;if(!claims?.computerId||!claims?.organizationId||!Number.isFinite(claims?.exp)||Date.now()>=claims.exp)return null;return claims;}catch{return null;}
 }
 
+function firstHeader(value:unknown){return String(value||"").split(",")[0]?.trim()||"";}
 function publicOrigin(req:FastifyRequest){
-  const forwardedProto=String(req.headers["x-forwarded-proto"]||"").split(",")[0].trim();
-  const forwardedHost=String(req.headers["x-forwarded-host"]||"").split(",")[0].trim();
+  const forwardedProto=firstHeader(req.headers["x-forwarded-proto"]);
+  const forwardedHost=firstHeader(req.headers["x-forwarded-host"]);
   const proto=forwardedProto||req.protocol||"https";
   const host=forwardedHost||req.headers.host||"";
   return `${proto}://${host}`;
@@ -42,8 +44,10 @@ export function viewerRoutes(config:Config){return async(app:FastifyInstance)=>{
     const computer=await prisma.computer.findFirst({where:{id,organizationId:req.auth!.organizationId,deletedAt:null},include:{host:{include:{credential:true}}}});
     if(!computer||!computer.host||!computer.providerInstanceId)return reply.code(404).send({error:{code:"NOT_FOUND",message:"AI Computer is not available"}});
     if(computer.status!=="RUNNING")return reply.code(409).send({error:{code:"NOT_RUNNING",message:`AI Computer is ${computer.status}`}});
-    const provider=providerFor(computer.host,config);if(!provider.getDesktopEndpoint)return reply.code(409).send({error:{code:"VIEWER_UNAVAILABLE",message:"Provider does not expose a desktop endpoint"}});
-    await provider.getDesktopEndpoint(computer.providerInstanceId);
+    const provider=providerFor(computer.host,config);
+    if(!provider.getDesktopEndpoint)return reply.code(409).send({error:{code:"VIEWER_UNAVAILABLE",message:"Provider does not expose a desktop endpoint"}});
+    const endpoint=await provider.getDesktopEndpoint(computer.providerInstanceId);
+    if(!endpoint?.ipv4)return reply.code(409).send({error:{code:"VIEWER_UNAVAILABLE",message:"Desktop endpoint is not ready"}});
     const expiresAt=Date.now()+120_000;
     const token=sign(config,{computerId:id,organizationId:req.auth!.organizationId,exp:expiresAt});
     const base=`/api/v1/computers/${encodeURIComponent(id)}/viewer/${encodeURIComponent(token)}`;
@@ -52,14 +56,17 @@ export function viewerRoutes(config:Config){return async(app:FastifyInstance)=>{
     return {viewerUrl:`${origin}${base}/vnc.html?autoconnect=1&resize=scale&path=${encodeURIComponent(path.replace(/^\//,""))}`,websocketUrl:`${wsOrigin(origin)}${path}`,expiresAt:new Date(expiresAt).toISOString()};
   });
 
-  const resolveViewer=async(req:FastifyRequest,reply?:FastifyReply)=>{
+  const resolveViewer=async(req:FastifyRequest,reply?:FastifyReply):Promise<{params:z.infer<typeof viewerParams>;endpoint:DesktopEndpoint}|null>=>{
     const params=viewerParams.parse(req.params);const claims=verify(config,params.token);
     if(!claims||claims.computerId!==params.id){if(reply)await reply.code(401).send({error:{code:"VIEWER_TOKEN_INVALID",message:"Viewer session is invalid or expired"}});return null;}
     const computer=await prisma.computer.findFirst({where:{id:params.id,organizationId:claims.organizationId,deletedAt:null},include:{host:{include:{credential:true}}}});
     if(!computer||!computer.host||!computer.providerInstanceId){if(reply)await reply.code(404).send({error:{code:"NOT_FOUND",message:"AI Computer is not available"}});return null;}
     if(computer.status!=="RUNNING"){if(reply)await reply.code(409).send({error:{code:"NOT_RUNNING",message:`AI Computer is ${computer.status}`}});return null;}
-    const provider=providerFor(computer.host,config);if(!provider.getDesktopEndpoint){if(reply)await reply.code(409).send({error:{code:"VIEWER_UNAVAILABLE",message:"Desktop endpoint is unavailable"}});return null;}
-    return {params,endpoint:await provider.getDesktopEndpoint(computer.providerInstanceId)};
+    const provider=providerFor(computer.host,config);
+    if(!provider.getDesktopEndpoint){if(reply)await reply.code(409).send({error:{code:"VIEWER_UNAVAILABLE",message:"Desktop endpoint is unavailable"}});return null;}
+    const endpoint=await provider.getDesktopEndpoint(computer.providerInstanceId);
+    if(!endpoint?.ipv4){if(reply)await reply.code(409).send({error:{code:"VIEWER_UNAVAILABLE",message:"Desktop endpoint is not ready"}});return null;}
+    return {params,endpoint};
   };
 
   app.get("/:id/viewer/:token/websockify",{websocket:true},async(socket:SocketLike & {on(event:string,listener:(...args:any[])=>void):void},req:FastifyRequest)=>{
