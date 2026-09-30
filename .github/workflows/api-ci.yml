@@ -27,6 +27,7 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @xdigitex/contracts build
       - run: pnpm --filter @xdigitex/api prisma generate
       - run: pnpm --filter @xdigitex/api typecheck
       - run: pnpm --filter @xdigitex/api test
